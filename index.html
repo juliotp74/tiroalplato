@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Tiro al Plato Pro - Clay & Ducks</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Russo+One&display=swap" rel="stylesheet">
+  
+  <style>
+    body {
+      font-family: 'Russo One', sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+      overflow: hidden;
+      background-color: #0f172a;
+    }
+    
+    #game-container {
+      cursor: none; 
+    }
+
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.7);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+  </style>
+</head>
+<body class="w-full h-screen flex flex-col items-center justify-center p-0 m-0 sm:p-4">
+
+  <div id="wrapper" class="relative w-full h-full sm:max-w-5xl sm:max-h-[800px] sm:rounded-2xl overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.8)] bg-black">
+    
+    <canvas id="gameCanvas" class="absolute inset-0 w-full h-full block" width="1024" height="576"></canvas>
+
+    <div id="hud" class="absolute top-0 left-0 w-full p-4 flex justify-between items-start pointer-events-none z-10 hidden">
+      
+      <div class="glass-panel px-4 py-2 rounded-xl flex items-center space-x-3 shadow-lg">
+        <span class="text-3xl">🎯</span>
+        <div>
+          <p class="text-slate-300 text-[10px] sm:text-xs tracking-wider">PUNTUACIÓN</p>
+          <p id="score-display" class="text-white text-2xl sm:text-3xl font-bold leading-none">0</p>
+        </div>
+      </div>
+      
+      <div class="glass-panel px-4 py-2 rounded-xl flex flex-col items-center shadow-lg">
+        <p class="text-slate-300 text-[10px] sm:text-xs tracking-wider mb-1">MUNICIÓN</p>
+        <div id="ammo-display" class="flex space-x-1 sm:space-x-2 h-6 sm:h-8">
+          <!-- Los cartuchos se inyectan por JS -->
+        </div>
+      </div>
+
+      <div class="glass-panel px-4 py-2 rounded-xl flex flex-col items-end shadow-lg">
+        <p class="text-slate-300 text-[10px] sm:text-xs tracking-wider mb-1">VIDAS</p>
+        <div id="lives-display" class="flex space-x-1 text-red-500 text-xl sm:text-2xl">
+          <!-- Corazones se inyectan por JS -->
+        </div>
+      </div>
+    </div>
+
+    <div id="overlay-start" class="absolute inset-0 bg-slate-900/80 flex flex-col items-center justify-center text-white z-20">
+      <h1 class="text-5xl sm:text-7xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-orange-400 via-red-500 to-purple-600 mb-2 text-center drop-shadow-lg">
+        TIRO AL PLATO
+      </h1>
+      <p class="text-yellow-400 font-bold mb-6 text-center text-lg animate-pulse">¡CUIDADO CON LOS PATOS!</p>
+      <p class="text-slate-300 text-sm sm:text-base mb-8 text-center px-4 max-w-md">
+        Tienes <strong>3 disparos</strong> por cada ronda. Acierta a los platos (+1) y a los patos (+3). Si un objetivo escapa, pierdes una vida.
+      </p>
+      <button id="btn-start" class="bg-gradient-to-b from-orange-500 to-orange-700 hover:from-orange-400 hover:to-orange-600 text-white px-8 py-4 rounded-full text-xl sm:text-2xl font-bold shadow-[0_0_20px_rgba(249,115,22,0.5)] transition transform hover:scale-105 active:scale-95 cursor-pointer pointer-events-auto">
+        INICIAR PARTIDA
+      </button>
+      
+      <button id="btn-sound-toggle" class="mt-8 text-slate-400 hover:text-white flex items-center gap-2 transition pointer-events-auto cursor-pointer">
+        <span id="sound-icon" class="text-2xl">🔊</span> Sonido Activado
+      </button>
+    </div>
+
+    <div id="overlay-gameover" class="absolute inset-0 bg-red-900/90 flex flex-col items-center justify-center text-white z-20 hidden">
+      <h2 class="text-5xl sm:text-7xl font-bold mb-4 drop-shadow-lg text-center">¡FIN DEL JUEGO!</h2>
+      <div class="glass-panel p-6 rounded-2xl mb-8 text-center border-red-500/30">
+        <p class="text-slate-300 text-lg mb-1">Puntuación Final</p>
+        <p id="final-score" class="text-6xl font-bold text-orange-400">0</p>
+      </div>
+      <button id="btn-restart" class="bg-white text-red-900 hover:bg-slate-200 px-8 py-4 rounded-full text-xl font-bold shadow-lg transition transform hover:scale-105 active:scale-95 cursor-pointer pointer-events-auto">
+        VOLVER A INTENTAR
+      </button>
+    </div>
+  </div>
+
+  <script>
+    class AudioEngine {
+      constructor() {
+        this.ctx = null;
+        this.enabled = true;
+      }
+
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioContext();
+        }
+        if (this.ctx.state === 'suspended') this.ctx.resume();
+      }
+
+      playShotgun() {
+        if (!this.enabled || !this.ctx) return;
+        const bufferSize = this.ctx.sampleRate * 0.5;
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = buffer;
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(1000, this.ctx.currentTime);
+        filter.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.3);
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(1, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.4);
+
+        noise.connect(filter); filter.connect(gain); gain.connect(this.ctx.destination);
+        noise.start();
+      }
+
+      playHit() {
+        if (!this.enabled || !this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(800, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.15);
+        osc.connect(gain); gain.connect(this.ctx.destination);
+        osc.start(); osc.stop(this.ctx.currentTime + 0.2);
+      }
+
+      playEmpty() {
+        if (!this.enabled || !this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(600, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(800, this.ctx.currentTime + 0.05);
+        gain.gain.setValueAtTime(0.6, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.05);
+        osc.connect(gain); gain.connect(this.ctx.destination);
+        osc.start(); osc.stop(this.ctx.currentTime + 0.1);
+      }
+    }
+
+    const audio = new AudioEngine();
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const GAME_WIDTH = 1024;
+    const GAME_HEIGHT = 576;
+    
+    const STATE_START = 0, STATE_PLAYING = 1, STATE_GAMEOVER = 2;
+    let gameState = STATE_START;
+
+    let score = 0, lives = 3, ammo = 3;
+    let lastTime = 0, spawnTimer = 0, currentSpawnInterval = 2500;
+    let flashAlpha = 0;
+
+    let targets = [], particles = [], clouds = [];
+    let pointerX = GAME_WIDTH / 2, pointerY = GAME_HEIGHT / 2;
+
+    const uiStart = document.getElementById('overlay-start');
+    const uiGameover = document.getElementById('overlay-gameover');
+    const uiHud = document.getElementById('hud');
+
+    class Cloud {
+      constructor() {
+        this.x = Math.random() * GAME_WIDTH;
+        this.y = Math.random() * (GAME_HEIGHT / 2);
+        this.speed = 0.2 + Math.random() * 0.4;
+        this.scale = 0.5 + Math.random() * 1;
+        this.opacity = 0.4 + Math.random() * 0.4;
+      }
+      update(deltaTime) {
+        this.x += this.speed * (deltaTime * 0.06);
+        if (this.x > GAME_WIDTH + 100) {
+          this.x = -100;
+          this.y = Math.random() * (GAME_HEIGHT / 2);
+        }
+      }
+      draw(ctx) {
+        ctx.save();
+        ctx.fillStyle = `rgba(255, 255, 255, ${this.opacity})`;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, 30 * this.scale, Math.PI * 0.5, Math.PI * 1.5);
+        ctx.arc(this.x + 30 * this.scale, this.y - 15 * this.scale, 40 * this.scale, Math.PI * 1, Math.PI * 2);
+        ctx.arc(this.x + 60 * this.scale, this.y, 30 * this.scale, Math.PI * 1.5, Math.PI * 0.5);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    class DuckTarget {
+      constructor(currentScore) {
+        const side = Math.random() > 0.5 ? 0 : 1;
+        this.x = side === 0 ? -40 : GAME_WIDTH + 40;
+        this.startY = 50 + Math.random() * (GAME_HEIGHT / 2 - 100);
+        this.y = this.startY;
+
+        const speedBase = 3 + Math.random() * 2 + (currentScore * 0.03);
+        this.vx = side === 0 ? speedBase : -speedBase;
+        this.direction = side === 0 ? 1 : -1;
+
+        this.active = true;
+        this.isDuck = true;
+        this.radius = 35; // Hitbox ligeramente más grande
+        this.time = 0;
+        this.freq = 0.05 + Math.random() * 0.04;
+        this.amp = 30 + Math.random() * 50;
+      }
+
+      update(deltaTime) {
+        if (!this.active) return;
+        const timeScale = deltaTime * 0.06;
+        this.time += timeScale;
+
+        this.x += this.vx * timeScale;
+        this.y = this.startY + Math.sin(this.time * this.freq) * this.amp;
+
+        if ((this.direction === 1 && this.x > GAME_WIDTH + 60) ||
+            (this.direction === -1 && this.x < -60)) {
+          this.active = false;
+          loseLife();
+        }
+      }
+
+      draw(ctx) {
+        if (!this.active) return;
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        if (this.direction === -1) ctx.scale(-1, 1);
+
+        // Cuerpo (Marrón)
+        ctx.fillStyle = '#8B4513';
+        ctx.beginPath(); ctx.ellipse(0, 5, 24, 14, 0, 0, Math.PI*2); ctx.fill();
+        // Cola
+        ctx.beginPath(); ctx.moveTo(-20, 5); ctx.lineTo(-38, -5); ctx.lineTo(-15, 12); ctx.fill();
+        // Cabeza (Verde)
+        ctx.fillStyle = '#228B22';
+        ctx.beginPath(); ctx.arc(16, -10, 12, 0, Math.PI*2); ctx.fill();
+        // Ojo
+        ctx.fillStyle = 'black';
+        ctx.beginPath(); ctx.arc(20, -12, 2, 0, Math.PI*2); ctx.fill();
+        // Pico (Naranja)
+        ctx.fillStyle = '#FFA500';
+        ctx.beginPath(); ctx.moveTo(26, -10); ctx.lineTo(40, -7); ctx.lineTo(26, -4); ctx.fill();
+        // Ala animada
+        ctx.fillStyle = '#A0522D';
+        let wingY = Math.sin(this.time * 0.5) * 22;
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-18, wingY); ctx.lineTo(12, wingY); ctx.fill();
+
+        ctx.restore();
+      }
+    }
+
+    class ClayTarget {
+      constructor(currentScore) {
+        const side = Math.random() > 0.5 ? 0 : 1;
+        this.x = side === 0 ? -20 : GAME_WIDTH + 20;
+        this.y = GAME_HEIGHT - 50; 
+        
+        const type = Math.floor(Math.random() * 3); // 0: Alto, 1: Medio, 2: Bajo y Cruzado
+        const diffMulti = 1 + (currentScore * 0.02);
+        
+        let vxBase, vyBase;
+        if (type === 0) { // Parabólica alta y vertical
+           vxBase = 2 + Math.random() * 3;
+           vyBase = -15 - Math.random() * 3;
+        } else if (type === 1) { // Normal
+           vxBase = 4 + Math.random() * 3;
+           vyBase = -12 - Math.random() * 3;
+        } else { // Cruzado bajo y rápido
+           vxBase = 7 + Math.random() * 4;
+           vyBase = -8 - Math.random() * 2;
+        }
+
+        this.vx = (side === 0 ? vxBase : -vxBase) * diffMulti;
+        this.vy = vyBase;
+        this.gravity = 0.15;
+        this.radius = 25; 
+        this.active = true;
+        this.isDuck = false;
+        this.angle = 0;
+        this.rotSpeed = (Math.random() - 0.5) * 0.2;
+      }
+
+      update(deltaTime) {
+        if (!this.active) return;
+        const timeScale = deltaTime * 0.06;
+        this.x += this.vx * timeScale;
+        this.vy += this.gravity * timeScale;
+        this.y += this.vy * timeScale;
+        this.angle += this.rotSpeed * timeScale;
+
+        if (this.y > GAME_HEIGHT + this.radius && this.vy > 0) {
+          this.active = false;
+          loseLife();
+        }
+      }
+
+      draw(ctx) {
+        if (!this.active) return;
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+
+        ctx.fillStyle = '#ff6600';
+        ctx.beginPath(); ctx.ellipse(0, 0, this.radius, this.radius * 0.4, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#ff8833';
+        ctx.beginPath(); ctx.ellipse(0, -this.radius*0.1, this.radius*0.7, this.radius * 0.25, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#cc4400';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(0, 0, this.radius * 0.4, this.radius * 0.15, 0, 0, Math.PI * 2); ctx.stroke();
+
+        ctx.restore();
+      }
+    }
+
+    class Particle {
+      constructor(x, y, type) {
+        this.x = x; this.y = y;
+        this.type = type; // 0 = Arcilla, 1 = Pluma
+        this.life = 1.0;
+        const angle = Math.random() * Math.PI * 2;
+
+        if (this.type === 1) { // Comportamiento de Pluma
+          const speed = Math.random() * 3 + 1;
+          this.vx = Math.cos(angle) * speed;
+          this.vy = Math.sin(angle) * speed - 2;
+          this.gravity = 0.03; // Cae lento
+          this.decay = Math.random() * 0.015 + 0.005; 
+          this.color = Math.random() > 0.5 ? '#228B22' : '#8B4513';
+          this.rotSpeed = (Math.random() - 0.5) * 0.5;
+          this.angle = Math.random() * Math.PI * 2;
+          this.width = Math.random() * 8 + 4;
+          this.height = Math.random() * 4 + 2;
+        } else { // Fragmento de arcilla
+          const speed = Math.random() * 8 + 2;
+          this.vx = Math.cos(angle) * speed;
+          this.vy = Math.sin(angle) * speed - 2;
+          this.gravity = 0.2;
+          this.decay = Math.random() * 0.03 + 0.015;
+          this.size = Math.random() * 6 + 2;
+          this.color = Math.random() > 0.5 ? '#ff6600' : '#333333';
+        }
+      }
+
+      update(deltaTime) {
+        const timeScale = deltaTime * 0.06;
+        this.x += this.vx * timeScale;
+        this.vy += this.gravity * timeScale;
+        this.y += this.vy * timeScale;
+        this.life -= this.decay * timeScale;
+        if(this.type === 1) this.angle += this.rotSpeed * timeScale;
+      }
+
+      draw(ctx) {
+        if (this.life <= 0) return;
+        ctx.save();
+        ctx.globalAlpha = this.life;
+        ctx.fillStyle = this.color;
+        
+        if (this.type === 1) { // Dibujar pluma
+          ctx.translate(this.x, this.y);
+          ctx.rotate(this.angle);
+          ctx.fillRect(-this.width/2, -this.height/2, this.width, this.height);
+        } else { // Dibujar fragmento
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+
+    function initEnvironment() {
+      clouds = [];
+      for(let i=0; i<8; i++) clouds.push(new Cloud());
+    }
+
+    function startGame() {
+      audio.init();
+      score = 0; lives = 3; ammo = 3;
+      targets = []; particles = [];
+      currentSpawnInterval = 2500;
+      updateUI();
+      
+      uiStart.classList.add('hidden');
+      uiGameover.classList.add('hidden');
+      uiHud.classList.remove('hidden');
+      document.body.style.cursor = 'none';
+      
+      gameState = STATE_PLAYING;
+      lastTime = performance.now();
+      requestAnimationFrame(gameLoop);
+    }
+
+    function loseLife() {
+      if (gameState !== STATE_PLAYING) return;
+      lives--;
+      updateUI();
+      
+      document.getElementById('wrapper').classList.add('border-4', 'border-red-500');
+      setTimeout(() => document.getElementById('wrapper').classList.remove('border-4', 'border-red-500'), 150);
+
+      if (lives <= 0) gameOver();
+    }
+
+    function gameOver() {
+      gameState = STATE_GAMEOVER;
+      uiHud.classList.add('hidden');
+      uiGameover.classList.remove('hidden');
+      document.getElementById('final-score').textContent = score;
+      document.body.style.cursor = 'default';
+    }
+
+    function updateUI() {
+      document.getElementById('score-display').textContent = score;
+      
+      // Actualizar Vidas
+      const livesUI = document.getElementById('lives-display');
+      livesUI.innerHTML = '';
+      for(let i=0; i<3; i++) {
+        livesUI.innerHTML += `<span style="opacity: ${i < lives ? '1' : '0.2'}">❤️</span>`;
+      }
+
+      // Actualizar Munición (Cartuchos)
+      const ammoUI = document.getElementById('ammo-display');
+      ammoUI.innerHTML = '';
+      for(let i=0; i<3; i++) {
+        if(i < ammo) {
+           ammoUI.innerHTML += `<div class="w-3 sm:w-4 h-full bg-red-600 border-b-4 border-yellow-500 rounded-t-sm shadow-sm transition-all duration-200"></div>`;
+        } else {
+           ammoUI.innerHTML += `<div class="w-3 sm:w-4 h-full bg-black/50 border-b-4 border-slate-700 rounded-t-sm shadow-inner transition-all duration-200"></div>`;
+        }
+      }
+    }
+
+    function spawnLogic(deltaTime) {
+      spawnTimer += deltaTime;
+      if (spawnTimer >= currentSpawnInterval) {
+        spawnTimer = 0;
+        
+        // ¡Se recarga la munición en cada nueva ronda/lanzamiento!
+        ammo = 3; 
+        updateUI();
+
+        const rand = Math.random();
+        
+        // 15% de probabilidad de Pato si ya tienes algo de puntos
+        if (rand < 0.15 && score > 5) {
+           targets.push(new DuckTarget(score));
+        } 
+        // 25% de probabilidad de Platos Dobles en puntuaciones medias
+        else if (rand < 0.40 && score > 10) {
+           targets.push(new ClayTarget(score));
+           targets.push(new ClayTarget(score));
+        } 
+        // 60% Un solo plato
+        else {
+           targets.push(new ClayTarget(score));
+        }
+
+        currentSpawnInterval = Math.max(900, 2500 - (score * 35)); 
+      }
+    }
+
+    function explodeTarget(t) {
+      t.active = false;
+      score += t.isDuck ? 3 : 1;
+      updateUI();
+      audio.playHit();
+      
+      const particleCount = t.isDuck ? 10 : 15;
+      const type = t.isDuck ? 1 : 0;
+      for(let i=0; i<particleCount; i++) {
+        particles.push(new Particle(t.x, t.y, type));
+      }
+    }
+
+    function updatePointerPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = GAME_WIDTH / rect.width;
+      const scaleY = GAME_HEIGHT / rect.height;
+      pointerX = (e.clientX - rect.left) * scaleX;
+      pointerY = (e.clientY - rect.top) * scaleY;
+    }
+
+    window.addEventListener('pointermove', (e) => {
+      if (gameState === STATE_PLAYING) updatePointerPos(e);
+    });
+
+    window.addEventListener('pointerdown', (e) => {
+      if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+      if (gameState === STATE_PLAYING) {
+        updatePointerPos(e);
+        shoot();
+      }
+    });
+
+    function shoot() {
+      if (ammo <= 0) {
+        audio.playEmpty(); // Clic de arma vacía
+        return;
+      }
+
+      ammo--;
+      updateUI();
+      audio.playShotgun();
+      flashAlpha = 1.0;
+      
+      const hitRadius = 45; // Margen de acierto
+      for(let t of targets) {
+        if (!t.active) continue;
+        const dx = t.x - pointerX;
+        const dy = t.y - pointerY;
+        const distance = Math.sqrt(dx*dx + dy*dy);
+        
+        if (distance < t.radius + hitRadius * 0.5) {
+          explodeTarget(t);
+        }
+      }
+    }
+
+    function drawBackground() {
+      const skyGrad = ctx.createLinearGradient(0, 0, 0, GAME_HEIGHT);
+      skyGrad.addColorStop(0, '#1e3a8a'); 
+      skyGrad.addColorStop(1, '#7dd3fc'); 
+      ctx.fillStyle = skyGrad;
+      ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+      clouds.forEach(c => c.draw(ctx));
+
+      // Montañas 
+      ctx.fillStyle = '#064e3b';
+      ctx.beginPath();
+      ctx.moveTo(0, GAME_HEIGHT);
+      ctx.quadraticCurveTo(GAME_WIDTH * 0.25, GAME_HEIGHT - 120, GAME_WIDTH * 0.5, GAME_HEIGHT);
+      ctx.quadraticCurveTo(GAME_WIDTH * 0.75, GAME_HEIGHT - 180, GAME_WIDTH, GAME_HEIGHT);
+      ctx.fill();
+
+      // Césped
+      ctx.fillStyle = '#15803d'; 
+      ctx.fillRect(0, GAME_HEIGHT - 50, GAME_WIDTH, 50);
+      
+      // Casas de lanzamiento
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(-20, GAME_HEIGHT - 60, 60, 40);
+      ctx.fillRect(GAME_WIDTH - 40, GAME_HEIGHT - 60, 60, 40);
+    }
+
+    function drawCrosshair() {
+      ctx.save();
+      ctx.translate(pointerX, pointerY);
+      
+      ctx.strokeStyle = ammo > 0 ? 'rgba(255, 0, 0, 0.8)' : 'rgba(100, 100, 100, 0.8)';
+      ctx.lineWidth = 3;
+      
+      ctx.beginPath(); ctx.arc(0, 0, 20, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = ammo > 0 ? 'red' : 'gray';
+      ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI*2); ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(-30, 0); ctx.lineTo(-10, 0);
+      ctx.moveTo(10, 0); ctx.lineTo(30, 0);
+      ctx.moveTo(0, -30); ctx.lineTo(0, -10);
+      ctx.moveTo(0, 10); ctx.lineTo(0, 30);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function gameLoop(timestamp) {
+      const deltaTime = timestamp - lastTime;
+      lastTime = timestamp;
+
+      if (gameState !== STATE_PLAYING) return;
+
+      spawnLogic(deltaTime);
+      clouds.forEach(c => c.update(deltaTime));
+      
+      for (let i = targets.length - 1; i >= 0; i--) {
+        targets[i].update(deltaTime);
+        if (!targets[i].active && targets[i].y > GAME_HEIGHT) targets.splice(i, 1);
+      }
+      
+      for (let i = particles.length - 1; i >= 0; i--) {
+        particles[i].update(deltaTime);
+        if (particles[i].life <= 0) particles.splice(i, 1);
+      }
+
+      if (flashAlpha > 0) {
+        flashAlpha -= deltaTime * 0.005;
+        if (flashAlpha < 0) flashAlpha = 0;
+      }
+
+      ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+      drawBackground();
+      
+      targets.forEach(t => t.draw(ctx));
+      particles.forEach(p => p.draw(ctx));
+      drawCrosshair();
+
+      if (flashAlpha > 0) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+        ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+      }
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    document.getElementById('btn-start').addEventListener('click', startGame);
+    document.getElementById('btn-restart').addEventListener('click', startGame);
+    
+    const btnSound = document.getElementById('btn-sound-toggle');
+    btnSound.addEventListener('click', () => {
+      audio.enabled = !audio.enabled;
+      if (audio.enabled) {
+        btnSound.innerHTML = '<span class="text-2xl">🔊</span> Sonido Activado';
+      } else {
+        btnSound.innerHTML = '<span class="text-2xl">🔇</span> Sonido Silenciado';
+      }
+    });
+
+    initEnvironment();
+    
+    function menuLoop() {
+      if (gameState === STATE_START) {
+        clouds.forEach(c => c.update(16));
+        drawBackground();
+        requestAnimationFrame(menuLoop);
+      }
+    }
+    requestAnimationFrame(menuLoop);
+
+  </script>
+</body>
+</html>
